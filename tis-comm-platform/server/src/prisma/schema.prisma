@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// NOTE: SQLite does not support Prisma enums, so role / status fields are
+// stored as strings. The TypeScript layer constrains valid values.
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      String   // ADMIN | PROGRAM_MANAGER | PROJECT_MANAGER | CHANGE_MANAGER | SOLUTION_ARCHITECT | PMO
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignedSites SiteUser[]
+  weeklyReports WeeklyReport[]
+  commEvents    CommunicationEvent[]
+  escalations   Escalation[]
+  actionItems   ActionItem[]
+  kpiEntries    KPIEntry[]
+}
+
+model Site {
+  id           String    @id @default(cuid())
+  name         String
+  country      String
+  code         String    @unique
+  status       String    @default("ACTIVE") // PLANNING | ACTIVE | HYPERCARE | CLOSED
+  currentPhase String    @default("ASSESS") // ASSESS | PREPARE | DEMONSTRATE | BUILD | TEST_AND_TRAIN | DEPLOY | OPERATE
+  kickoffDate  DateTime?
+  goLiveDate   DateTime?
+  hyperCareEnd DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  users        SiteUser[]
+  reports      WeeklyReport[]
+  commEvents   CommunicationEvent[]
+  stakeholders Stakeholder[]
+  risks        Risk[]
+  milestones   Milestone[]
+  escalations  Escalation[]
+  kpiEntries   KPIEntry[]
+  surveys      Survey[]
+  workstreams  Workstream[]
+}
+
+model SiteUser {
+  id     String @id @default(cuid())
+  siteId String
+  userId String
+  role   String
+  site   Site   @relation(fields: [siteId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([siteId, userId])
+}
+
+model Workstream {
+  id          String          @id @default(cuid())
+  siteId      String
+  name        String
+  order       Int
+  site        Site            @relation(fields: [siteId], references: [id])
+  ragStatuses WorkstreamRAG[]
+}
+
+model WorkstreamRAG {
+  id           String       @id @default(cuid())
+  workstreamId String
+  reportId     String
+  rag          String   // RED | AMBER | GREEN
+  trend        String   // IMPROVING | STABLE | WORSENING
+  comment      String   @default("")
+  workstream   Workstream   @relation(fields: [workstreamId], references: [id])
+  report       WeeklyReport @relation(fields: [reportId], references: [id])
+}
+
+model WeeklyReport {
+  id              String   @id @default(cuid())
+  siteId          String
+  authorId        String
+  weekStart       DateTime
+  weekEnd         DateTime
+  weekNumber      Int
+  status          String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED
+  overallRAG      String   // RED | AMBER | GREEN
+  doneThisWeek    String   @default("")
+  plannedNextWeek String   @default("")
+  keyMessage      String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  site           Site            @relation(fields: [siteId], references: [id])
+  author         User            @relation(fields: [authorId], references: [id])
+  workstreamRAGs WorkstreamRAG[]
+  decisions      Decision[]
+  actions        ActionItem[]
+  risks          ReportRisk[]
+}
+
+model Risk {
+  id          String    @id @default(cuid())
+  siteId      String
+  type        String    // RISK | ISSUE
+  title       String
+  description String    @default("")
+  impact      String    // HIGH | MEDIUM | LOW
+  probability String    // HIGH | MEDIUM | LOW
+  status      String    // RED | AMBER | GREEN
+  mitigation  String    @default("")
+  ownerName   String    @default("")
+  dueDate     DateTime?
+  resolved    Boolean   @default(false)
+  resolution  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  site    Site         @relation(fields: [siteId], references: [id])
+  reports ReportRisk[]
+}
+
+model ReportRisk {
+  reportId String
+  riskId   String
+  report   WeeklyReport @relation(fields: [reportId], references: [id])
+  risk     Risk         @relation(fields: [riskId], references: [id])
+
+  @@id([reportId, riskId])
+}
+
+model Decision {
+  id             String    @id @default(cuid())
+  reportId       String
+  description    String
+  context        String    @default("")
+  recommendation String    @default("")
+  neededBy       DateTime
+  decidedBy      String    @default("")
+  status         String    @default("OPEN") // OPEN | DECIDED | DEFERRED
+  resolution     String?
+  resolvedAt     DateTime?
+
+  report WeeklyReport @relation(fields: [reportId], references: [id])
+}
+
+model ActionItem {
+  id          String   @id @default(cuid())
+  reportId    String?
+  siteId      String?
+  description String
+  ownerName   String
+  ownerId     String?
+  dueDate     DateTime
+  status      String   @default("OPEN") // OPEN | IN_PROGRESS | DONE | OVERDUE
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  report WeeklyReport? @relation(fields: [reportId], references: [id])
+  owner  User?         @relation(fields: [ownerId], references: [id])
+}
+
+model Milestone {
+  id          String    @id @default(cuid())
+  siteId      String
+  gate        String    // TG0 .. TG6
+  name        String
+  plannedDate DateTime
+  actualDate  DateTime?
+  status      String    @default("PLANNED") // PLANNED | ON_TRACK | AT_RISK | COMPLETED | DELAYED
+  notes       String?
+  commSent    Boolean   @default(false)
+
+  site Site @relation(fields: [siteId], references: [id])
+}
+
+model CommunicationEvent {
+  id           String    @id @default(cuid())
+  siteId       String
+  templateCode String
+  title        String
+  dueDate      DateTime
+  sentDate     DateTime?
+  status       String    @default("PLANNED") // PLANNED | DUE | IN_PROGRESS | PENDING_APPROVAL | SENT | OVERDUE | SKIPPED
+  approvedBy   String?
+  approvedAt   DateTime?
+  notes        String?
+  archivedPath String?
+  authorId     String?
+  createdAt    DateTime  @default(now())
+
+  site   Site  @relation(fields: [siteId], references: [id])
+  author User? @relation(fields: [authorId], references: [id])
+}
+
+model Stakeholder {
+  id                 String   @id @default(cuid())
+  siteId             String
+  name               String
+  role               String
+  organization       String?
+  email              String?
+  phone              String?
+  influence          String   // HIGH | MEDIUM | LOW
+  interest           String   // HIGH | MEDIUM | LOW
+  engagementStrategy String?
+  keyMessages        String?
+  layer              String   // PROJECT | PROGRAM | PARTNER
+  isKeyUser          Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  site Site @relation(fields: [siteId], references: [id])
+}
+
+model Escalation {
+  id                 String    @id @default(cuid())
+  siteId             String
+  raisedById         String
+  title              String
+  issueSummary       String
+  impact             String
+  options            String
+  recommendation     String
+  decisionNeededBy   DateTime
+  decisionNeededFrom String
+  status             String    @default("OPEN") // OPEN | ACKNOWLEDGED | RESOLVED | CLOSED
+  resolution         String?
+  resolvedAt         DateTime?
+  createdAt          DateTime  @default(now())
+
+  site     Site @relation(fields: [siteId], references: [id])
+  raisedBy User @relation(fields: [raisedById], references: [id])
+}
+
+model Survey {
+  id        String           @id @default(cuid())
+  siteId    String
+  type      String           // POST_KICKOFF | POST_UAT | T_PLUS_30
+  sentDate  DateTime
+  responses SurveyResponse[]
+
+  site Site @relation(fields: [siteId], references: [id])
+}
+
+model SurveyResponse {
+  id          String   @id @default(cuid())
+  surveyId    String
+  q1Score     Int
+  q2Score     Int
+  q3Text      String
+  q4Volume    String
+  q5Score     Int
+  submittedAt DateTime @default(now())
+
+  survey Survey @relation(fields: [surveyId], references: [id])
+}
+
+model KPIEntry {
+  id                     String   @id @default(cuid())
+  siteId                 String
+  authorId               String
+  quarter                String
+  scAttendanceRate       Float?
+  trainingAttendance     Float?
+  bsbDeliveryRate        Float?
+  glSequenceOnTime       Boolean?
+  unnecessaryEscalations Int?
+  satisfactionScore      Float?
+  commRelatedGLIssues    Int?
+  notes                  String?
+  createdAt              DateTime @default(now())
+
+  site   Site @relation(fields: [siteId], references: [id])
+  author User @relation(fields: [authorId], references: [id])
+
+  @@unique([siteId, quarter])
+}

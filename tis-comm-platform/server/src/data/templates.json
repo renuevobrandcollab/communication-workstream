@@ -1,0 +1,707 @@
+[
+  {
+    "code": "WSR-001",
+    "name": "Weekly Status Report",
+    "group": "Governance & Team",
+    "layer": "PRJ",
+    "owner": "PM / PMO",
+    "approver": "PM (internal — no external approval needed)",
+    "timing": "Every week from kick-off to project close. Before the weekly meeting.",
+    "frequency": "Weekly",
+    "format": "Word / Email — 1 page maximum",
+    "tone": "Direct and factual. No spin. Red means Red.",
+    "mandatory": [
+      "RAG status per workstream",
+      "Done last week — per workstream",
+      "Planned this week — per workstream",
+      "Top 3 risks and issues with owner",
+      "Decisions needed",
+      "Open action log"
+    ],
+    "forbidden": [
+      "Narrative paragraphs — use bullets only",
+      "Marking something Green when it is Amber or Red",
+      "More than 1 page",
+      "Sending after the weekly meeting has started"
+    ],
+    "wbsRef": "PRJ-2.2 / PRJ-5.1.1 / PRJ-6.1.1"
+  },
+  {
+    "code": "SC-PRJ",
+    "name": "Project Steering Committee Pack",
+    "group": "Governance & Team",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Monthly. 5 working days before the SC meeting.",
+    "frequency": "Monthly",
+    "format": "PowerPoint — max 10 slides",
+    "tone": "Executive. Decisions over status. Bottom line up front.",
+    "mandatory": [
+      "Overall RAG with one-line rationale",
+      "Decisions needed at this SC",
+      "Top risks and mitigations",
+      "Budget and schedule snapshot",
+      "Key milestones — last month, next month"
+    ],
+    "forbidden": [
+      "Reading every slide aloud",
+      "Hidden risks tucked in appendix",
+      "More than 10 slides",
+      "Surprising the SC with bad news that should have been escalated earlier"
+    ],
+    "wbsRef": "PRJ-2.1"
+  },
+  {
+    "code": "SC-PGM",
+    "name": "Program Steering Committee Pack",
+    "group": "Program",
+    "layer": "PGM",
+    "owner": "Program Manager",
+    "approver": "Program Sponsor",
+    "timing": "Monthly. 5 working days before program SC.",
+    "frequency": "Monthly",
+    "format": "PowerPoint — max 15 slides",
+    "tone": "Executive. Cross-site portfolio view.",
+    "mandatory": [
+      "Portfolio RAG roll-up",
+      "Cross-site risks and dependencies",
+      "Resource conflicts",
+      "Budget portfolio view",
+      "Decisions needed"
+    ],
+    "forbidden": [
+      "Site-by-site detail (already in SC-PRJ)",
+      "Surprises at portfolio level",
+      "More than 15 slides"
+    ],
+    "wbsRef": "PGM-2.1"
+  },
+  {
+    "code": "SC-EXEC",
+    "name": "Executive Steering Committee Brief",
+    "group": "Program",
+    "layer": "PGM",
+    "owner": "Program Manager",
+    "approver": "Program Sponsor",
+    "timing": "Quarterly. 1 week before exec SC.",
+    "frequency": "Quarterly",
+    "format": "PowerPoint — max 6 slides",
+    "tone": "Strategic. Outcomes over activity.",
+    "mandatory": [
+      "Strategic outcomes vs plan",
+      "Material risks needing exec action",
+      "Budget at exec level",
+      "Asks of the exec team"
+    ],
+    "forbidden": [
+      "Operational detail",
+      "Tactical risks",
+      "More than 6 slides"
+    ],
+    "wbsRef": "PGM-2.0"
+  },
+  {
+    "code": "TAM-001",
+    "name": "Team Announcement (project team or workstream)",
+    "group": "Governance & Team",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "PM",
+    "timing": "Whenever a team change occurs.",
+    "frequency": "Ad-hoc",
+    "format": "Email — short, max 200 words",
+    "tone": "Warm but professional. Welcome new members; recognise leavers.",
+    "mandatory": [
+      "Name and role",
+      "Effective date",
+      "Reporting line",
+      "Single contact for questions"
+    ],
+    "forbidden": [
+      "Long bios",
+      "HR confidential information",
+      "Mentioning compensation"
+    ],
+    "wbsRef": "PRJ-1.3"
+  },
+  {
+    "code": "PAR-001",
+    "name": "Partner / Vendor Announcement",
+    "group": "Governance & Team",
+    "layer": "PRJ",
+    "owner": "PM / Procurement",
+    "approver": "Business Sponsor",
+    "timing": "When a new vendor joins / contract change.",
+    "frequency": "Ad-hoc",
+    "format": "Email — 1 page",
+    "tone": "Factual and confident.",
+    "mandatory": [
+      "Vendor name",
+      "Scope of services",
+      "Single point of contact",
+      "Contract dates",
+      "Where to direct issues"
+    ],
+    "forbidden": [
+      "Commercial terms or pricing",
+      "Contract clauses",
+      "Internal procurement debates"
+    ],
+    "wbsRef": "PRJ-3.2"
+  },
+  {
+    "code": "ESC-001",
+    "name": "Escalation Memo",
+    "group": "Governance & Team",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Program Manager",
+    "timing": "Within 24 hours of identifying an issue requiring decision above PM level.",
+    "frequency": "Ad-hoc",
+    "format": "1-page memo — no attachments",
+    "tone": "Crisp. Decision-oriented. No blame.",
+    "mandatory": [
+      "Issue summary — 2 sentences max",
+      "Impact",
+      "Options considered",
+      "Recommendation",
+      "Decision needed by (date)",
+      "Decision needed from (role)"
+    ],
+    "forbidden": [
+      "Long history",
+      "Blame language",
+      "More than 1 page",
+      "Burying the ask"
+    ],
+    "wbsRef": "PRJ-2.3"
+  },
+  {
+    "code": "BSB-001",
+    "name": "Business Sponsor Briefing",
+    "group": "Business-Facing",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "PM",
+    "timing": "Bi-weekly — between SC meetings. Or before any major decision.",
+    "frequency": "Bi-weekly",
+    "format": "Word — 1 page",
+    "tone": "Plain language. Trusted advisor.",
+    "mandatory": [
+      "What changed since last brief",
+      "What I need from you (sponsor)",
+      "Risks that may need your air-cover",
+      "Decisions coming up"
+    ],
+    "forbidden": [
+      "Technical jargon",
+      "More than 1 page",
+      "Surprises during SC"
+    ],
+    "wbsRef": "PRJ-1.1"
+  },
+  {
+    "code": "KU-001",
+    "name": "Key User Brief",
+    "group": "Business-Facing",
+    "layer": "PRJ",
+    "owner": "Change Manager",
+    "approver": "PM",
+    "timing": "Monthly. Before each phase gate.",
+    "frequency": "Monthly",
+    "format": "Email + 30-min call — 1 page",
+    "tone": "Operational. Empowering.",
+    "mandatory": [
+      "What's coming up for key users",
+      "What we need them to do",
+      "Training dates",
+      "Single point of contact"
+    ],
+    "forbidden": [
+      "Project-internal status",
+      "Slides with workstream RAGs",
+      "Mentioning issues that don't affect them"
+    ],
+    "wbsRef": "PRJ-4.2"
+  },
+  {
+    "code": "TG-000",
+    "name": "TG0 — Project Charter Approved",
+    "group": "Gate Communications",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Within 2 days of TG0 approval.",
+    "frequency": "Once",
+    "format": "Email — site leadership + extended team",
+    "tone": "Confident. Sets the tone for project.",
+    "mandatory": [
+      "Charter approved — date",
+      "Scope at a glance",
+      "Team and roles",
+      "Next gate (TG1) and date"
+    ],
+    "forbidden": [
+      "Detailed project plan",
+      "RAG (none yet)",
+      "Risk register"
+    ],
+    "wbsRef": "PRJ-5.1.0"
+  },
+  {
+    "code": "TG-001",
+    "name": "TG1 — Kick-off Communication",
+    "group": "Gate Communications",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Day of kick-off.",
+    "frequency": "Once",
+    "format": "Email + town hall",
+    "tone": "Energising. Inclusive.",
+    "mandatory": [
+      "Kick-off date and outcomes",
+      "Project objectives — 3 bullets",
+      "How to stay informed",
+      "Team contacts"
+    ],
+    "forbidden": [
+      "Detailed timelines",
+      "Risk register",
+      "Budget"
+    ],
+    "wbsRef": "PRJ-5.1.1"
+  },
+  {
+    "code": "TG-002",
+    "name": "TG2 — Design Approved",
+    "group": "Gate Communications",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Within 3 days of TG2 sign-off.",
+    "frequency": "Once",
+    "format": "Email + briefing slides",
+    "tone": "Reassuring. Clear what was decided.",
+    "mandatory": [
+      "Design approved — what's in / out of scope",
+      "Build phase start date",
+      "Major design decisions",
+      "What this means for users"
+    ],
+    "forbidden": [
+      "Functional spec details",
+      "Vendor names without context",
+      "Reopening closed decisions"
+    ],
+    "wbsRef": "PRJ-5.1.2"
+  },
+  {
+    "code": "TG-003",
+    "name": "TG3 — Build Complete",
+    "group": "Gate Communications",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Within 3 days of TG3 sign-off.",
+    "frequency": "Once",
+    "format": "Email + 1-pager",
+    "tone": "Factual. Build phase wrapped.",
+    "mandatory": [
+      "Build complete — date",
+      "What was delivered",
+      "Test phase entry criteria met",
+      "Test phase plan and dates"
+    ],
+    "forbidden": [
+      "Open defects (those go to internal log)",
+      "Remaining build tasks",
+      "Vendor escalations"
+    ],
+    "wbsRef": "PRJ-5.1.3"
+  },
+  {
+    "code": "TG-004",
+    "name": "TG4 — Test & Train Complete",
+    "group": "Gate Communications",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Within 3 days of TG4 sign-off.",
+    "frequency": "Once",
+    "format": "Email + readiness pack",
+    "tone": "Confident. Go-live readiness clear.",
+    "mandatory": [
+      "Testing outcomes — pass rate, defects resolved",
+      "Training completion rate",
+      "Go / no-go criteria status",
+      "Cutover plan summary"
+    ],
+    "forbidden": [
+      "Detailed defect list",
+      "Vendor performance comments",
+      "Hidden Ambers"
+    ],
+    "wbsRef": "PRJ-5.1.4"
+  },
+  {
+    "code": "TG-006",
+    "name": "TG6 — HyperCare Exit",
+    "group": "Gate Communications",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Within 5 days of TG6 sign-off.",
+    "frequency": "Once",
+    "format": "Email + closure pack",
+    "tone": "Celebratory but factual.",
+    "mandatory": [
+      "HyperCare ended — date",
+      "Outstanding items handed over to BAU",
+      "Lessons learned — top 3",
+      "Project closure date"
+    ],
+    "forbidden": [
+      "Reopening project decisions",
+      "New scope",
+      "Blame for issues"
+    ],
+    "wbsRef": "PRJ-5.1.6"
+  },
+  {
+    "code": "GL-001",
+    "name": "Go-Live — T-4 weeks",
+    "group": "Go-Live Sequence",
+    "layer": "PRJ",
+    "owner": "PM + Change Manager",
+    "approver": "Business Sponsor",
+    "timing": "Exactly 4 weeks before go-live.",
+    "frequency": "Once",
+    "format": "Email + intranet article",
+    "tone": "Confident. Calm. We've got this.",
+    "mandatory": [
+      "Go-live date confirmed",
+      "What changes for users",
+      "Training reminders",
+      "Cutover dates and any service interruptions",
+      "Where to get help"
+    ],
+    "forbidden": [
+      "Hedging language",
+      "Open risks",
+      "Readiness percentages without context"
+    ],
+    "wbsRef": "PRJ-5.2.1"
+  },
+  {
+    "code": "GL-002",
+    "name": "Go-Live — T-1 week",
+    "group": "Go-Live Sequence",
+    "layer": "PRJ",
+    "owner": "PM + Change Manager",
+    "approver": "Business Sponsor",
+    "timing": "Exactly 1 week before go-live.",
+    "frequency": "Once",
+    "format": "Email + manager cascade pack",
+    "tone": "Direct. Action-oriented.",
+    "mandatory": [
+      "Final cutover schedule",
+      "What to do / not do this week",
+      "Backup contacts",
+      "How to access the new system on day 1"
+    ],
+    "forbidden": [
+      "Open risks",
+      "Status updates from project team",
+      "Anything that could create FUD"
+    ],
+    "wbsRef": "PRJ-5.2.2"
+  },
+  {
+    "code": "GL-003",
+    "name": "Go-Live — Day 0 / Cutover",
+    "group": "Go-Live Sequence",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Day of cutover.",
+    "frequency": "Once",
+    "format": "Email + Teams broadcast",
+    "tone": "Calm. Operational.",
+    "mandatory": [
+      "Cutover started",
+      "System available time",
+      "Hyper-care command centre details",
+      "Escalation paths"
+    ],
+    "forbidden": [
+      "Speculation",
+      "Marketing language",
+      "RAG status"
+    ],
+    "wbsRef": "PRJ-5.2.3"
+  },
+  {
+    "code": "GL-004",
+    "name": "Go-Live — Day 1 / Welcome to D365",
+    "group": "Go-Live Sequence",
+    "layer": "PRJ",
+    "owner": "Business Sponsor + PM",
+    "approver": "Business Sponsor",
+    "timing": "Morning of Day 1 in production.",
+    "frequency": "Once",
+    "format": "Email from Business Sponsor + intranet",
+    "tone": "Warm. Encouraging. Thank-you driven.",
+    "mandatory": [
+      "Welcome message",
+      "Where to get help today",
+      "Recognition of team effort",
+      "What to expect this week"
+    ],
+    "forbidden": [
+      "Open issues",
+      "RAG status",
+      "Comparison to other sites"
+    ],
+    "wbsRef": "PRJ-5.2.4"
+  },
+  {
+    "code": "GL-005",
+    "name": "Go-Live + 2 weeks — Stabilisation Update",
+    "group": "Go-Live Sequence",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Exactly 2 weeks after go-live.",
+    "frequency": "Once",
+    "format": "Email — 1 page",
+    "tone": "Honest. Show progress, acknowledge bumps.",
+    "mandatory": [
+      "What's working well",
+      "Known issues being worked",
+      "Help desk volumes vs expected",
+      "When to expect HyperCare exit"
+    ],
+    "forbidden": [
+      "Spin",
+      "Hidden issues",
+      "Anything that contradicts what users see daily"
+    ],
+    "wbsRef": "PRJ-5.2.5"
+  },
+  {
+    "code": "EU-001",
+    "name": "End User — Awareness (T-8 weeks)",
+    "group": "End User Journey",
+    "layer": "PRJ",
+    "owner": "Change Manager",
+    "approver": "PM",
+    "timing": "8 weeks before go-live.",
+    "frequency": "Once",
+    "format": "Email + intranet article + poster",
+    "tone": "Friendly. Why are we doing this?",
+    "mandatory": [
+      "What's changing — high level",
+      "Why we are doing this",
+      "What users need to do — nothing yet, just be aware",
+      "Where to find more info"
+    ],
+    "forbidden": [
+      "Training dates (too early)",
+      "Detailed process changes",
+      "Project status"
+    ],
+    "wbsRef": "PRJ-4.3.1"
+  },
+  {
+    "code": "EU-002",
+    "name": "End User — Understanding (T-6 weeks)",
+    "group": "End User Journey",
+    "layer": "PRJ",
+    "owner": "Change Manager",
+    "approver": "PM",
+    "timing": "6 weeks before go-live.",
+    "frequency": "Once",
+    "format": "Email + manager briefing pack",
+    "tone": "Clear. Process changes by role.",
+    "mandatory": [
+      "What changes for your role",
+      "New process at a glance — by role",
+      "Training dates by role",
+      "Manager briefing — what to do with your team"
+    ],
+    "forbidden": [
+      "Generic content not by role",
+      "All-staff one-size-fits-all message",
+      "Project RAG"
+    ],
+    "wbsRef": "PRJ-4.3.2"
+  },
+  {
+    "code": "EU-003",
+    "name": "End User — Training & Action (T-4 to T-2 weeks)",
+    "group": "End User Journey",
+    "layer": "PRJ",
+    "owner": "Change Manager",
+    "approver": "PM",
+    "timing": "4 to 2 weeks before go-live.",
+    "frequency": "Multi-touch",
+    "format": "Email + training calendar + reminders",
+    "tone": "Action-oriented. Specific.",
+    "mandatory": [
+      "Personalised training schedule",
+      "Pre-work to complete",
+      "How to ask questions",
+      "Manager check-in point"
+    ],
+    "forbidden": [
+      "One generic email to everyone",
+      "Optional language for mandatory training"
+    ],
+    "wbsRef": "PRJ-4.3.3"
+  },
+  {
+    "code": "EU-004",
+    "name": "End User — Reinforcement (Go-Live + 4 weeks)",
+    "group": "End User Journey",
+    "layer": "PRJ",
+    "owner": "Change Manager",
+    "approver": "PM",
+    "timing": "4 weeks after go-live.",
+    "frequency": "Once",
+    "format": "Email + tip series + survey link",
+    "tone": "Supportive. Coaching.",
+    "mandatory": [
+      "Tips for common tasks",
+      "Where to get help",
+      "Recognition of team effort",
+      "Survey link"
+    ],
+    "forbidden": [
+      "Project status",
+      "Open defects",
+      "Critical tone"
+    ],
+    "wbsRef": "PRJ-4.3.4"
+  },
+  {
+    "code": "BU-MGT-001",
+    "name": "Business Unit Management Update",
+    "group": "Business-Facing",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "Monthly.",
+    "frequency": "Monthly",
+    "format": "Email + 5 slides",
+    "tone": "Operational. By BU.",
+    "mandatory": [
+      "What it means for your BU this month",
+      "What we need from you",
+      "Decisions coming up",
+      "Risks that could affect your BU"
+    ],
+    "forbidden": [
+      "Generic project update",
+      "Workstream-by-workstream RAG",
+      "Vendor commentary"
+    ],
+    "wbsRef": "PRJ-1.2"
+  },
+  {
+    "code": "KPI-001",
+    "name": "KPI Quarterly Review",
+    "group": "Governance & Measurement",
+    "layer": "PGM",
+    "owner": "Program Manager",
+    "approver": "Program Sponsor",
+    "timing": "Quarterly. Within 10 days of quarter end.",
+    "frequency": "Quarterly",
+    "format": "Word + dashboard export",
+    "tone": "Factual. Trend-based.",
+    "mandatory": [
+      "All 7 KPIs with target / actual / status",
+      "Quarter-on-quarter trend",
+      "Root cause for any RED",
+      "Actions for next quarter"
+    ],
+    "forbidden": [
+      "Cherry-picked KPIs",
+      "Excuses without actions",
+      "Hiding RED behind weighted averages"
+    ],
+    "wbsRef": "PGM-6.1"
+  },
+  {
+    "code": "REPO-001",
+    "name": "Communications Repository Index",
+    "group": "Governance & Measurement",
+    "layer": "PRJ",
+    "owner": "PMO",
+    "approver": "PM",
+    "timing": "Monthly. Always current.",
+    "frequency": "Monthly",
+    "format": "SharePoint index + summary",
+    "tone": "Reference document.",
+    "mandatory": [
+      "All communications sent — code, date, status",
+      "SharePoint paths to archived copies",
+      "Open / overdue communications"
+    ],
+    "forbidden": [
+      "Versions in email folders",
+      "Communications without an archived copy",
+      "Manual indices that fall out of date"
+    ],
+    "wbsRef": "PRJ-6.1.2"
+  },
+  {
+    "code": "RACI-PRJ",
+    "name": "Project RACI Matrix",
+    "group": "Governance & Team",
+    "layer": "PRJ",
+    "owner": "PM",
+    "approver": "Business Sponsor",
+    "timing": "At kick-off and after any team change.",
+    "frequency": "Ad-hoc",
+    "format": "Excel + 1-page summary",
+    "tone": "Reference document.",
+    "mandatory": [
+      "All major activities by phase",
+      "R / A / C / I per role",
+      "One owner only per row (the A)",
+      "Sign-off from each Responsible role"
+    ],
+    "forbidden": [
+      "Multiple A's per row",
+      "Missing C / I roles",
+      "RACI without sign-off"
+    ],
+    "wbsRef": "PRJ-1.4"
+  },
+  {
+    "code": "RACI-PGM",
+    "name": "Program RACI Matrix",
+    "group": "Program",
+    "layer": "PGM",
+    "owner": "Program Manager",
+    "approver": "Program Sponsor",
+    "timing": "At program start and after any role change.",
+    "frequency": "Ad-hoc",
+    "format": "Excel + 1-page summary",
+    "tone": "Reference document.",
+    "mandatory": [
+      "All major program-level activities",
+      "Site PM / Program Manager / PMO / Sponsor / Group IT roles",
+      "One A per row",
+      "Sign-off from each Responsible role"
+    ],
+    "forbidden": [
+      "Multiple A's per row",
+      "Conflating project and program responsibilities",
+      "RACI without sign-off"
+    ],
+    "wbsRef": "PGM-1.4"
+  }
+]
