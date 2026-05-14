@@ -219,14 +219,67 @@ const typicalDailyHours = (wcId, globalCal, wcOverrides) => {
   return 8;
 };
 
-// Walk forward from `startISO` across only OPEN days at WC, consuming
-// the MO's Capacity_Hours. Returns [{date, hours}] — one entry per open day used.
+// Pack all MOs in a single Work Center, respecting per-day residual
+// capacity left by earlier-scheduled MOs. Returns a {moId: [{date, hours}]} map
+// for the MOs in `wcMos`, and mutates `usedByIso` so callers can chain.
+const packWcSchedules = (wcMos, wc, globalCal, wcOverrides, usedByIso = {}) => {
+  // Sort by newStart so MOs anchored earlier book their days first.
+  const list = wcMos.slice().sort((a, b) =>
+    (a.newStart || "").localeCompare(b.newStart || "") ||
+    a.MO_ID.localeCompare(b.MO_ID));
+  const out = {};
+  for (const m of list) {
+    const sched = [];
+    let remaining = Number(m.Capacity_Hours) || 0;
+    let cursor = parseISO(m.newStart);
+    if (!cursor || remaining <= 0) { out[m.MO_ID] = sched; continue; }
+    let safety = 730;
+    while (remaining > 0.0001 && safety-- > 0) {
+      const iso = toISO(cursor);
+      const cap = availableHours(wc, cursor, globalCal, wcOverrides);
+      const usedToday = usedByIso[iso] || 0;
+      const free = Math.max(0, cap - usedToday);
+      if (free > 0) {
+        const take = Math.min(free, remaining);
+        sched.push({ date: new Date(cursor), hours: take });
+        usedByIso[iso] = usedToday + take;
+        remaining -= take;
+      }
+      cursor = addDays(cursor, 1);
+    }
+    out[m.MO_ID] = sched;
+  }
+  return out;
+};
+
+// Pack schedules for a whole MO list grouped by WC. Excluded MOs are
+// not allocated and get an empty schedule.
+const packAllSchedules = (mos, globalCal, wcOverrides, excludedWcs) => {
+  const all = {};
+  const byWc = new Map();
+  for (const m of mos) {
+    if (m.excluded || (excludedWcs && excludedWcs.has(m.Work_Center))) {
+      all[m.MO_ID] = [];
+      continue;
+    }
+    if (!byWc.has(m.Work_Center)) byWc.set(m.Work_Center, []);
+    byWc.get(m.Work_Center).push(m);
+  }
+  for (const [wc, list] of byWc.entries()) {
+    const part = packWcSchedules(list, wc, globalCal, wcOverrides);
+    Object.assign(all, part);
+  }
+  return all;
+};
+
+// Single-MO schedule, ignoring other MOs. Used for the initial backward-
+// from-due-date placement at import time, where no other MOs exist yet.
 const computeMoSchedule = (mo, globalCal, wcOverrides) => {
   const out = [];
   let remaining = Number(mo.Capacity_Hours) || 0;
   let cursor = parseISO(mo.newStart);
   if (!cursor || remaining <= 0) return out;
-  let safety = 730; // up to ~2 years of look-ahead
+  let safety = 730;
   while (remaining > 0.0001 && safety-- > 0) {
     const av = availableHours(mo.Work_Center, cursor, globalCal, wcOverrides);
     if (av > 0) {
@@ -341,16 +394,17 @@ function App() {
     setErrorBanner(null);
   };
 
-  /* -------------------- Schedules (calendar-aware) -------------------- */
-  // For each MO, compute its day-by-day occupation. Closed days are skipped.
-  const schedules = useMemo(() => {
-    const out = {};
-    for (const m of mos) {
-      if (m.excluded) { out[m.MO_ID] = []; continue; }
-      out[m.MO_ID] = computeMoSchedule(m, globalCal, wcOverrides);
-    }
-    return out;
-  }, [mos, globalCal, wcOverrides]);
+  /* -------------------- Schedules (calendar + capacity aware) ----------
+     Within each Work Center, MOs are packed in order of their newStart
+     anchor and only consume the residual capacity left on each day after
+     earlier MOs have booked theirs. Closed days are skipped. This is what
+     lets a planner drag an MO onto a 50%-saturated day and have it fill
+     the remaining 4h on that day before spilling into the next ones.
+  */
+  const schedules = useMemo(
+    () => packAllSchedules(mos, globalCal, wcOverrides, excludedWcs),
+    [mos, globalCal, wcOverrides, excludedWcs]
+  );
 
   const effectiveEnd = useCallback((mo) => {
     const s = schedules[mo.MO_ID];
@@ -569,11 +623,15 @@ function App() {
         byWc.get(m.Work_Center).push(m);
       }
       // Compute new newStart for every affected MO, in sequence per WC.
+      // Pack each MO into the residual day capacity left by earlier MOs in
+      // the same WC — so a 50%-saturated day is filled before spilling to
+      // the next day.
       const updates = {};       // { moId: newStartISO }
       const sortedPerWc = {};   // { wc: [moId, moId, ...] in new order }
       for (const [wc, list] of byWc.entries()) {
         list.sort((a,b) => (a.newStart||"").localeCompare(b.newStart||"")
                            || a.MO_ID.localeCompare(b.MO_ID));
+        const usedByIso = {};
         let cursor = list[0] ? parseISO(list[0].newStart) : null;
         if (cursor && cursor < today) cursor = today;
         const idsInOrder = [];
@@ -582,9 +640,19 @@ function App() {
           const ns = toISO(cursor);
           updates[m.MO_ID] = ns;
           idsInOrder.push(m.MO_ID);
-          const sched = computeMoSchedule({ ...m, newStart: ns }, globalCal, wcOverrides);
-          const end = sched.length ? sched[sched.length-1].date : cursor;
-          cursor = addDays(end, 1);
+          // Pack this MO into the WC's residual capacity, updating usedByIso.
+          const part = packWcSchedules([{ ...m, newStart: ns }], wc,
+                                        globalCal, wcOverrides, usedByIso);
+          const sched = part[m.MO_ID] || [];
+          if (sched.length) {
+            const lastDay = sched[sched.length-1].date;
+            const lastIso = toISO(lastDay);
+            const capLast = availableHours(wc, lastDay, globalCal, wcOverrides);
+            const residual = Math.max(0, capLast - (usedByIso[lastIso] || 0));
+            cursor = residual > 0.0001 ? lastDay : addDays(lastDay, 1);
+          } else {
+            cursor = addDays(cursor, 1);
+          }
         }
         sortedPerWc[wc] = idsInOrder;
       }
@@ -1465,9 +1533,8 @@ function CompareView({ current, other, loadOther, back }) {
     const oov = other.wcOverrides || {};
     const oexc = new Set(other.excludedWcs || []);
     const visible = (other.mos || []).filter(m => !m.excluded && !oexc.has(m.Work_Center));
-    // Build schedules with the saved calendar
-    const sched = {};
-    for (const m of visible) sched[m.MO_ID] = computeMoSchedule(m, ogc, oov);
+    // Build schedules with the saved calendar (capacity-packed)
+    const sched = packAllSchedules(visible, ogc, oov, oexc);
     // Time window
     let min = null, max = null;
     for (const m of visible) {
