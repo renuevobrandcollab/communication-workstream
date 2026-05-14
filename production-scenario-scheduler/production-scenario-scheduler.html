@@ -18,7 +18,6 @@
   .mo-bar.dragging { cursor: grabbing; opacity: 0.85; pointer-events: none; }
   body.dragging-mo .mo-bar { pointer-events: none; }
   .day-cell { stroke: #e2e8f0; stroke-width: 1; }
-  .late { outline: 2px solid #dc2626; outline-offset: 1px; }
   .scrollbar-thin::-webkit-scrollbar { height: 10px; width: 10px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
 </style>
@@ -126,14 +125,21 @@ const SAMPLE_WCS = [
 const generateSampleMOs = () => {
   const today = startOfDay(new Date());
   const mos = [];
+  // Mostly-future deliveries with a handful already late.
   for (let i = 0; i < 32; i++) {
     const wc = SAMPLE_WCS[i % SAMPLE_WCS.length];
-    const startOffset = Math.floor(Math.random() * 12);
-    const start = addDays(today, startOffset);
+    const isPastDue = i < 4;                   // first 4 MOs are already late
+    const dueOffset = isPastDue
+      ? -7 + Math.floor(Math.random() * 5)     // -7..-3
+      : 5 + Math.floor(Math.random() * 28);    // +5..+32
     const hours = 4 + Math.floor(Math.random() * 28); // 4..32h
     const span = Math.max(1, Math.ceil(hours / 8));
+    // Start ~span days before the due date, but never before today.
+    const desiredStartOffset = dueOffset - span;
+    const startOffset = Math.max(0, desiredStartOffset);
+    const start = addDays(today, startOffset);
     const end = addDays(start, span - 1);
-    const due = addDays(end, Math.floor(Math.random() * 7) - 2); // some early/late
+    const due = addDays(today, dueOffset);
     mos.push({
       MO_ID: `MO-${1000 + i}`,
       Item: SAMPLE_ITEMS[i % SAMPLE_ITEMS.length],
@@ -258,11 +264,17 @@ const enrichMOs = (rows, globalCal, wcOverrides) => {
     return {
       ...base,
       Original_Work_Center: base.Work_Center,
+      Original_newStart: placement.newStart,
       newStart: placement.newStart,
       excluded: false,
     };
   });
 };
+
+// Tracks whether the planner has moved the MO since import.
+const isMoved = (mo) =>
+  mo.Work_Center !== mo.Original_Work_Center ||
+  (mo.Original_newStart && mo.newStart !== mo.Original_newStart);
 
 /* ============================================================================
    Top-level App component
@@ -518,23 +530,24 @@ function App() {
   // The first MO keeps its current newStart (earliest one of the WC).
   const realign = () => {
     setMos(prev => {
-      // Build groups by WC including only visible MOs.
+      const today = startOfDay(new Date());
       const byWc = new Map();
       for (const m of prev) {
         if (m.excluded || excludedWcs.has(m.Work_Center)) continue;
         if (!byWc.has(m.Work_Center)) byWc.set(m.Work_Center, []);
         byWc.get(m.Work_Center).push(m);
       }
-      // Compute new newStart per MO by walking schedules in order.
       const updates = {};
       for (const [wc, list] of byWc.entries()) {
         list.sort((a,b) => (a.newStart||"").localeCompare(b.newStart||"")
                            || a.MO_ID.localeCompare(b.MO_ID));
+        // First MO of the WC starts at max(its current newStart, today).
         let cursor = list[0] ? parseISO(list[0].newStart) : null;
+        if (cursor && cursor < today) cursor = today;
         for (const m of list) {
+          if (cursor < today) cursor = today;
           const ns = toISO(cursor);
           updates[m.MO_ID] = ns;
-          // Compute schedule from this newStart to find the effective end
           const sched = computeMoSchedule({ ...m, newStart: ns }, globalCal, wcOverrides);
           const end = sched.length ? sched[sched.length-1].date : cursor;
           cursor = addDays(end, 1);
@@ -577,10 +590,13 @@ function App() {
       if (wcAttr) drag.targetWc = wcAttr.getAttribute("data-wc-row");
     }
     // Visual preview: only move newStart (and Work_Center). End is derived.
+    // Clamp newStart to >= today so the planner cannot schedule in the past.
+    const today = startOfDay(new Date());
     setMos(prev => prev.map(m => {
       if (m.MO_ID !== drag.moId) return m;
-      const ns = toISO(addDays(drag.origStart, drag.deltaDays));
-      return { ...m, newStart: ns, Work_Center: drag.targetWc };
+      let candidate = addDays(drag.origStart, drag.deltaDays);
+      if (candidate < today) candidate = today;
+      return { ...m, newStart: toISO(candidate), Work_Center: drag.targetWc };
     }));
   };
 
@@ -628,6 +644,8 @@ function App() {
               openCalendar={(wc) => setCalendarModal(wc)}
               close={() => setSidebarOpen(false)}
               mos={mos}
+              toggleExcludeMo={(moId) => setMos(prev => prev.map(m =>
+                m.MO_ID === moId ? { ...m, excluded: !m.excluded } : m))}
             />
           )}
           {mos.length === 0 ? (
@@ -795,13 +813,14 @@ function KpiBar({ k, mosCount }) {
 }
 
 /* ------------------------------ Sidebar --------------------------------- */
-function Sidebar({ grouped, excludedWcs, toggleWc, openCalendar, close, mos }) {
+function Sidebar({ grouped, excludedWcs, toggleWc, openCalendar, close, mos, toggleExcludeMo }) {
   // visible MO count per WC (excluding MOs marked excluded individually)
   const liveCount = {};
   for (const m of mos) {
     if (m.excluded) continue;
     liveCount[m.Work_Center] = (liveCount[m.Work_Center] || 0) + 1;
   }
+  const hiddenMos = mos.filter(m => m.excluded);
   return (
     <aside className="w-64 border-r bg-white overflow-auto p-2 text-sm shrink-0">
       <div className="flex items-center mb-2">
@@ -825,6 +844,27 @@ function Sidebar({ grouped, excludedWcs, toggleWc, openCalendar, close, mos }) {
           ))}
         </div>
       ))}
+
+      {hiddenMos.length > 0 && (
+        <div className="mt-4 pt-3 border-t">
+          <div className="text-xs uppercase tracking-wide text-slate-500 mb-1 flex items-center">
+            <span>Hidden MOs</span>
+            <span className="ml-auto text-slate-400">({hiddenMos.length})</span>
+          </div>
+          <div className="text-[10px] text-slate-500 mb-1">Tick to bring back into the scenario.</div>
+          {hiddenMos.map(m => (
+            <div key={m.MO_ID} className="flex items-center gap-2 py-0.5">
+              <input type="checkbox" checked={false}
+                     onChange={() => toggleExcludeMo(m.MO_ID)} title="Re-include in scenario"/>
+              <span className="flex-1 truncate text-slate-500" title={`${m.MO_ID} · ${m.Item} · ${m.Work_Center}`}>
+                <span className="font-mono">{m.MO_ID}</span> · {m.Item}
+              </span>
+              <button className="text-[11px] text-blue-600 hover:underline"
+                      onClick={() => toggleExcludeMo(m.MO_ID)}>show</button>
+            </div>
+          ))}
+        </div>
+      )}
     </aside>
   );
 }
@@ -950,7 +990,12 @@ function Gantt({ grouped, days, pxPerDay, zoom, schedules, saturation,
               const due = parseISO(mo.Requested_Delivery_Date);
               const sched = schedules[mo.MO_ID] || [];
               const ned = sched.length ? sched[sched.length-1].date : null;
-              const late = due && ned && ned > due;
+              const today = startOfDay(new Date());
+              const dueInPast = due && due < today;
+              const movedLate = isMoved(mo) && due && ned && ned > due;
+              const dueColor = dueInPast ? "text-red-600 font-semibold"
+                              : movedLate ? "text-amber-600 font-semibold"
+                              : "text-slate-500";
               return (
                 <div key={i} className="row-label px-3 text-xs text-slate-700 border-b flex items-center gap-2 bg-white"
                      style={{ position: "absolute", top: yPos, left: 0, right: 0, height: ROW_H }}>
@@ -962,8 +1007,8 @@ function Gantt({ grouped, days, pxPerDay, zoom, schedules, saturation,
                     <span className="text-slate-500"> · {mo.Item}</span>
                     <span className="text-[10px] text-slate-500"> · {mo.Capacity_Hours}h</span>
                   </div>
-                  <span className={`text-[10px] tabular-nums ${late?"text-red-600 font-semibold":"text-slate-500"}`}
-                        title={`Requested delivery: ${due ? fmtFull(due) : "—"}${late?" (late)":""}`}>
+                  <span className={`text-[10px] tabular-nums ${dueColor}`}
+                        title={`Requested delivery: ${due ? fmtFull(due) : "—"}${dueInPast?" (in the past)":movedLate?" (moved → late)":""}`}>
                     {due ? fmtShort(due) : "—"}
                   </span>
                 </div>
@@ -1079,17 +1124,21 @@ function Gantt({ grouped, days, pxPerDay, zoom, schedules, saturation,
               const mo = r.mo;
               const sched = schedules[mo.MO_ID] || [];
               const segs = segmentsOf(sched);
+              const today = startOfDay(new Date());
               const due = parseISO(mo.Requested_Delivery_Date);
               const ned = sched.length ? sched[sched.length-1].date : null;
-              const late = due && ned && ned > due;
-              const reassigned = mo.Work_Center !== mo.Original_Work_Center;
-              let fill = "#3b82f6";
-              if (late) fill = "#dc2626";
-              else if (reassigned) fill = "#7c3aed";
-              // anchor (newStart) used for drag pickup if there's no schedule yet
+              // Color rules:
+              //   RED   — delivery date is already in the past (will always be late).
+              //   YELLOW — MO has been moved AND its new end is after the delivery date.
+              //   BLUE  — default (on time, or unmoved).
+              const dueInPast = due && due < today;
+              const movedLate = isMoved(mo) && due && ned && ned > due;
+              let fill = "#3b82f6";       // blue
+              if (dueInPast) fill = "#dc2626"; // red
+              else if (movedLate) fill = "#f59e0b"; // yellow / amber
               const anchor = parseISO(mo.newStart);
               return (
-                <g key={i} onMouseDown={(e)=>onBarMouseDown(e, mo)} className={`mo-bar ${late?"late":""}`}>
+                <g key={i} onMouseDown={(e)=>onBarMouseDown(e, mo)} className="mo-bar">
                   {segs.length === 0 && anchor && (
                     <rect x={dayIndex(anchor)*pxPerDay+1} y={yPos+4}
                           width={pxPerDay-2} height={ROW_H-8}
