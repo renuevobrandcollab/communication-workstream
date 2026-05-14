@@ -190,52 +190,75 @@ const typicalDailyHours = (wcId, globalCal, wcOverrides) => {
   return 8;
 };
 
+// Walk forward from `startISO` across only OPEN days at WC, consuming
+// the MO's Capacity_Hours. Returns [{date, hours}] — one entry per open day used.
+const computeMoSchedule = (mo, globalCal, wcOverrides) => {
+  const out = [];
+  let remaining = Number(mo.Capacity_Hours) || 0;
+  let cursor = parseISO(mo.newStart);
+  if (!cursor || remaining <= 0) return out;
+  let safety = 730; // up to ~2 years of look-ahead
+  while (remaining > 0.0001 && safety-- > 0) {
+    const av = availableHours(mo.Work_Center, cursor, globalCal, wcOverrides);
+    if (av > 0) {
+      const used = Math.min(av, remaining);
+      out.push({ date: new Date(cursor), hours: used });
+      remaining -= used;
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return out;
+};
+
+// Backward from due date across only open days until Capacity_Hours covered.
+// Returns the earliest open day touched (= the proposed newStart).
 const placeBackwardFromDue = (mo, globalCal, wcOverrides) => {
   const due = parseISO(mo.Requested_Delivery_Date) || startOfDay(new Date());
-  const dailyH = typicalDailyHours(mo.Work_Center, globalCal, wcOverrides);
-  const spanDays = Math.max(1, Math.ceil(mo.Capacity_Hours / dailyH));
-  const end = due;
-  const start = addDays(end, -(spanDays - 1));
-  return { newStart: toISO(start), newEnd: toISO(end), spanDays };
+  let remaining = Number(mo.Capacity_Hours) || 0;
+  let cursor = new Date(due);
+  let lastOpen = new Date(due);
+  let safety = 730;
+  while (remaining > 0.0001 && safety-- > 0) {
+    const av = availableHours(mo.Work_Center, cursor, globalCal, wcOverrides);
+    if (av > 0) {
+      remaining -= Math.min(av, remaining);
+      lastOpen = new Date(cursor);
+    }
+    if (remaining <= 0.0001) break;
+    cursor = addDays(cursor, -1);
+  }
+  return { newStart: toISO(lastOpen) };
 };
 
 const initialPlace = (mo, globalCal, wcOverrides) => {
   const cs = parseISO(mo.Current_Start_Date);
-  const ce = parseISO(mo.Current_End_Date);
-  if (cs && ce) {
-    return { newStart: toISO(cs), newEnd: toISO(ce), spanDays: Math.max(1, diffDays(cs, ce) + 1) };
-  }
-  if (cs) {
-    const dailyH = typicalDailyHours(mo.Work_Center, globalCal, wcOverrides);
-    const span = Math.max(1, Math.ceil(mo.Capacity_Hours / dailyH));
-    return { newStart: toISO(cs), newEnd: toISO(addDays(cs, span-1)), spanDays: span };
-  }
+  if (cs) return { newStart: toISO(cs) };
   return placeBackwardFromDue(mo, globalCal, wcOverrides);
 };
 
 /* ---------- enrich MO list with derived fields used by the Gantt -------- */
 const enrichMOs = (rows, globalCal, wcOverrides) => {
   return rows.map(raw => {
-    const mo = normalizeRow(raw);
-    const placement = initialPlace(mo, globalCal, wcOverrides);
+    const r = normalizeRow(raw);
+    const base = {
+      MO_ID: String(r.MO_ID),
+      Item: String(r.Item || ""),
+      Quantity: Number(r.Quantity) || 0,
+      Capacity_Hours: Number(r.Capacity_Hours) || 0,
+      Work_Center: String(r.Work_Center),
+      Resource_Group: r.Resource_Group ? String(r.Resource_Group) : "(Unassigned)",
+      Requested_Delivery_Date: r.Requested_Delivery_Date
+        ? toISO(parseISO(r.Requested_Delivery_Date)) : "",
+      Current_Start_Date: r.Current_Start_Date
+        ? toISO(parseISO(r.Current_Start_Date)) : "",
+      Current_End_Date: r.Current_End_Date
+        ? toISO(parseISO(r.Current_End_Date)) : "",
+    };
+    const placement = initialPlace(base, globalCal, wcOverrides);
     return {
-      MO_ID: String(mo.MO_ID),
-      Item: String(mo.Item || ""),
-      Quantity: Number(mo.Quantity) || 0,
-      Capacity_Hours: Number(mo.Capacity_Hours) || 0,
-      Work_Center: String(mo.Work_Center),
-      Resource_Group: mo.Resource_Group ? String(mo.Resource_Group) : "(Unassigned)",
-      Requested_Delivery_Date: mo.Requested_Delivery_Date
-        ? toISO(parseISO(mo.Requested_Delivery_Date)) : "",
-      Current_Start_Date: mo.Current_Start_Date
-        ? toISO(parseISO(mo.Current_Start_Date)) : "",
-      Current_End_Date: mo.Current_End_Date
-        ? toISO(parseISO(mo.Current_End_Date)) : "",
-      // Scenario state:
-      Original_Work_Center: String(mo.Work_Center),
+      ...base,
+      Original_Work_Center: base.Work_Center,
       newStart: placement.newStart,
-      newEnd: placement.newEnd,
-      spanDays: placement.spanDays,
       excluded: false,
     };
   });
@@ -252,11 +275,11 @@ function App() {
   const [zoom, setZoom] = useState("day"); // "day" | "hour"
   const [pxPerDay, setPxPerDay] = useState(48);
   const [view, setView] = useState("gantt"); // "gantt" | "compare"
-  const [savedScenarios, setSavedScenarios] = useState([]); // for compare-mode
   const [compareScenario, setCompareScenario] = useState(null);
   const [scenarioName, setScenarioName] = useState("Scenario A");
   const [errorBanner, setErrorBanner] = useState(null);
   const [calendarModal, setCalendarModal] = useState(null); // null | "global" | wcId
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   /* -------------------- Excel / CSV import -------------------- */
   const onImport = async (file) => {
@@ -283,11 +306,28 @@ function App() {
     setErrorBanner(null);
   };
 
+  /* -------------------- Schedules (calendar-aware) -------------------- */
+  // For each MO, compute its day-by-day occupation. Closed days are skipped.
+  const schedules = useMemo(() => {
+    const out = {};
+    for (const m of mos) {
+      if (m.excluded) { out[m.MO_ID] = []; continue; }
+      out[m.MO_ID] = computeMoSchedule(m, globalCal, wcOverrides);
+    }
+    return out;
+  }, [mos, globalCal, wcOverrides]);
+
+  const effectiveEnd = useCallback((mo) => {
+    const s = schedules[mo.MO_ID];
+    if (s && s.length) return s[s.length-1].date;
+    return parseISO(mo.newStart);
+  }, [schedules]);
+
   /* -------------------- Excel / CSV export -------------------- */
   const exportRows = useMemo(() => mos.map(m => {
     const reassigned = m.Work_Center !== m.Original_Work_Center;
     const due = parseISO(m.Requested_Delivery_Date);
-    const ned = parseISO(m.newEnd);
+    const ned = effectiveEnd(m);
     const late = (!m.excluded && due && ned && ned > due);
     return {
       MO_ID: m.MO_ID,
@@ -295,13 +335,13 @@ function App() {
       Original_Work_Center: m.Original_Work_Center,
       New_Work_Center: reassigned ? m.Work_Center : "",
       New_Start_Date: m.excluded ? "" : m.newStart,
-      New_End_Date: m.excluded ? "" : m.newEnd,
+      New_End_Date: m.excluded ? "" : (ned ? toISO(ned) : ""),
       Requested_Delivery_Date: m.Requested_Delivery_Date,
       Late_Flag: m.excluded ? "" : (late ? "Y" : "N"),
       Days_Late: (!m.excluded && late) ? diffDays(due, ned) : "",
       Excluded_From_Scenario: m.excluded ? "Y" : "N",
     };
-  }), [mos]);
+  }), [mos, effectiveEnd]);
 
   const doExport = (kind) => {
     const ws = XLSX.utils.json_to_sheet(exportRows);
@@ -356,8 +396,39 @@ function App() {
     }
   };
 
-  /* -------------------- Grouping for Gantt rows -------------------- */
+  /* -------------------- Visible MO set (hide deselected) -------------------- */
+  // An MO is rendered only if it is included AND its Work_Center is included.
+  const visibleMos = useMemo(
+    () => mos.filter(m => !m.excluded && !excludedWcs.has(m.Work_Center)),
+    [mos, excludedWcs]
+  );
+
+  /* -------------------- Grouping for Gantt rows (visible only) -------- */
   const grouped = useMemo(() => {
+    const map = new Map();
+    for (const mo of visibleMos) {
+      const rg = mo.Resource_Group || "(Unassigned)";
+      const wc = mo.Work_Center;
+      if (!map.has(rg)) map.set(rg, new Map());
+      const g = map.get(rg);
+      if (!g.has(wc)) g.set(wc, []);
+      g.get(wc).push(mo);
+    }
+    return [...map.entries()]
+      .sort(([a],[b]) => a.localeCompare(b))
+      .map(([rg, wcs]) => ({
+        rg,
+        wcs: [...wcs.entries()].sort(([a],[b]) => a.localeCompare(b))
+                .map(([wc, list]) => ({
+                  wc,
+                  mos: list.sort((a,b) => (a.newStart||"").localeCompare(b.newStart||"")
+                                          || a.MO_ID.localeCompare(b.MO_ID))
+                }))
+      }));
+  }, [visibleMos]);
+
+  // For the sidebar (all WCs across the data, regardless of exclusion)
+  const groupedAll = useMemo(() => {
     const map = new Map();
     for (const mo of mos) {
       const rg = mo.Resource_Group || "(Unassigned)";
@@ -376,65 +447,103 @@ function App() {
       }));
   }, [mos]);
 
-  const allWcs = useMemo(() => {
+  const visibleWcs = useMemo(() => {
     const s = new Set();
-    mos.forEach(m => s.add(m.Work_Center));
+    visibleMos.forEach(m => s.add(m.Work_Center));
     return [...s].sort();
-  }, [mos]);
+  }, [visibleMos]);
 
   /* -------------------- Time window for the Gantt -------------------- */
   const timeWindow = useMemo(() => {
-    if (mos.length === 0) {
+    if (visibleMos.length === 0) {
       const today = startOfDay(new Date());
       return { start: today, end: addDays(today, 30) };
     }
-    let min = parseISO(mos[0].newStart), max = parseISO(mos[0].newEnd);
-    for (const m of mos) {
-      const s = parseISO(m.newStart), e = parseISO(m.newEnd);
+    let min = null, max = null;
+    for (const m of visibleMos) {
+      const s = parseISO(m.newStart);
+      const sched = schedules[m.MO_ID] || [];
+      const e = sched.length ? sched[sched.length-1].date : s;
       const due = parseISO(m.Requested_Delivery_Date);
-      if (s && s < min) min = s;
-      if (e && e > max) max = e;
-      if (due && due > max) max = due;
+      if (s && (min == null || s < min)) min = s;
+      if (e && (max == null || e > max)) max = e;
+      if (due && (max == null || due > max)) max = due;
+    }
+    if (!min || !max) {
+      const today = startOfDay(new Date());
+      return { start: today, end: addDays(today, 30) };
     }
     return { start: addDays(min, -2), end: addDays(max, 4) };
-  }, [mos]);
+  }, [visibleMos, schedules]);
 
   const days = useMemo(() => {
     const arr = [];
-    const total = diffDays(timeWindow.start, timeWindow.end) + 1;
+    const total = Math.max(1, diffDays(timeWindow.start, timeWindow.end) + 1);
     for (let i = 0; i < total; i++) arr.push(addDays(timeWindow.start, i));
     return arr;
   }, [timeWindow]);
 
   /* -------------------- Per-day saturation per WC -------------------- */
+  // Walks the per-MO schedule (which already skips closed days), so allocation
+  // never lands on a closed day. Available hours come from the calendar.
   const saturation = useMemo(() => {
-    // For each WC, for each day index → { allocated, available }
     const out = {};
-    for (const wc of allWcs) {
+    for (const wc of visibleWcs) {
       out[wc] = days.map(d => ({
         allocated: 0,
         available: availableHours(wc, d, globalCal, wcOverrides),
       }));
     }
-    for (const m of mos) {
-      if (m.excluded || excludedWcs.has(m.Work_Center)) continue;
-      const s = parseISO(m.newStart), e = parseISO(m.newEnd);
-      if (!s || !e) continue;
-      const span = Math.max(1, diffDays(s, e) + 1);
-      const perDay = m.Capacity_Hours / span;
-      for (let i = 0; i < span; i++) {
-        const d = addDays(s, i);
-        const idx = diffDays(timeWindow.start, d);
-        if (idx >= 0 && idx < days.length && out[m.Work_Center]) {
-          out[m.Work_Center][idx].allocated += perDay;
-        }
+    for (const m of visibleMos) {
+      const sched = schedules[m.MO_ID] || [];
+      const bucket = out[m.Work_Center];
+      if (!bucket) continue;
+      for (const e of sched) {
+        const idx = diffDays(timeWindow.start, e.date);
+        if (idx >= 0 && idx < bucket.length) bucket[idx].allocated += e.hours;
       }
     }
     return out;
-  }, [mos, days, allWcs, globalCal, wcOverrides, excludedWcs, timeWindow.start]);
+  }, [visibleMos, days, visibleWcs, globalCal, wcOverrides, schedules, timeWindow.start]);
 
   /* -------------------- KPIs -------------------- */
-  const kpis = useMemo(() => computeKpis(mos, saturation, excludedWcs), [mos, saturation, excludedWcs]);
+  const kpis = useMemo(
+    () => computeKpis(visibleMos, saturation, schedules),
+    [visibleMos, saturation, schedules]
+  );
+
+  /* -------------------- Realign (sequence MOs within each visible WC) -------------------- */
+  // Within each visible WC, sort MOs by current newStart and pack them sequentially
+  // with no gaps: each MO's newStart = the day after the previous MO's effective end.
+  // The first MO keeps its current newStart (earliest one of the WC).
+  const realign = () => {
+    setMos(prev => {
+      // Build groups by WC including only visible MOs.
+      const byWc = new Map();
+      for (const m of prev) {
+        if (m.excluded || excludedWcs.has(m.Work_Center)) continue;
+        if (!byWc.has(m.Work_Center)) byWc.set(m.Work_Center, []);
+        byWc.get(m.Work_Center).push(m);
+      }
+      // Compute new newStart per MO by walking schedules in order.
+      const updates = {};
+      for (const [wc, list] of byWc.entries()) {
+        list.sort((a,b) => (a.newStart||"").localeCompare(b.newStart||"")
+                           || a.MO_ID.localeCompare(b.MO_ID));
+        let cursor = list[0] ? parseISO(list[0].newStart) : null;
+        for (const m of list) {
+          const ns = toISO(cursor);
+          updates[m.MO_ID] = ns;
+          // Compute schedule from this newStart to find the effective end
+          const sched = computeMoSchedule({ ...m, newStart: ns }, globalCal, wcOverrides);
+          const end = sched.length ? sched[sched.length-1].date : cursor;
+          cursor = addDays(end, 1);
+        }
+      }
+      return prev.map(m => updates[m.MO_ID]
+        ? { ...m, newStart: updates[m.MO_ID] } : m);
+    });
+  };
 
   /* -------------------- Drag handlers -------------------- */
   const draggingRef = useRef(null);
@@ -446,7 +555,6 @@ function App() {
       startX: e.clientX,
       startY: e.clientY,
       origStart: parseISO(mo.newStart),
-      origEnd: parseISO(mo.newEnd),
       origWc: mo.Work_Center,
       deltaDays: 0,
       targetWc: mo.Work_Center,
@@ -468,12 +576,11 @@ function App() {
       const wcAttr = el.closest("[data-wc-row]");
       if (wcAttr) drag.targetWc = wcAttr.getAttribute("data-wc-row");
     }
-    // Visual preview: bump the MO state in-place
+    // Visual preview: only move newStart (and Work_Center). End is derived.
     setMos(prev => prev.map(m => {
       if (m.MO_ID !== drag.moId) return m;
       const ns = toISO(addDays(drag.origStart, drag.deltaDays));
-      const ne = toISO(addDays(drag.origEnd, drag.deltaDays));
-      return { ...m, newStart: ns, newEnd: ne, Work_Center: drag.targetWc };
+      return { ...m, newStart: ns, Work_Center: drag.targetWc };
     }));
   };
 
@@ -498,25 +605,31 @@ function App() {
         openCalendar={() => setCalendarModal("global")}
         view={view} setView={setView}
         hasData={mos.length > 0}
+        realign={realign}
+        sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}
       />
       {errorBanner && (
         <div className="bg-red-50 border-y border-red-200 text-red-800 px-4 py-2 text-sm whitespace-pre-wrap">
           {errorBanner} <button className="ml-2 underline" onClick={()=>setErrorBanner(null)}>dismiss</button>
         </div>
       )}
-      <KpiBar k={kpis} mosCount={mos.filter(m=>!m.excluded).length} />
+      <KpiBar k={kpis} mosCount={visibleMos.length} />
       {view === "gantt" ? (
         <div className="flex-1 flex overflow-hidden">
-          <Sidebar
-            grouped={grouped}
-            excludedWcs={excludedWcs}
-            toggleWc={(wc) => {
-              const n = new Set(excludedWcs);
-              n.has(wc) ? n.delete(wc) : n.add(wc);
-              setExcludedWcs(n);
-            }}
-            openCalendar={(wc) => setCalendarModal(wc)}
-          />
+          {sidebarOpen && (
+            <Sidebar
+              grouped={groupedAll}
+              excludedWcs={excludedWcs}
+              toggleWc={(wc) => {
+                const n = new Set(excludedWcs);
+                n.has(wc) ? n.delete(wc) : n.add(wc);
+                setExcludedWcs(n);
+              }}
+              openCalendar={(wc) => setCalendarModal(wc)}
+              close={() => setSidebarOpen(false)}
+              mos={mos}
+            />
+          )}
           {mos.length === 0 ? (
             <EmptyState loadSample={loadSample} />
           ) : (
@@ -525,9 +638,10 @@ function App() {
               days={days}
               pxPerDay={pxPerDay}
               zoom={zoom}
-              mos={mos}
+              schedules={schedules}
               saturation={saturation}
-              excludedWcs={excludedWcs}
+              globalCal={globalCal}
+              wcOverrides={wcOverrides}
               onBarMouseDown={onBarMouseDown}
               toggleExclude={(moId) => setMos(prev => prev.map(m =>
                 m.MO_ID === moId ? { ...m, excluded: !m.excluded } : m))}
@@ -536,7 +650,7 @@ function App() {
         </div>
       ) : (
         <CompareView
-          current={{ name: scenarioName, mos, saturation, kpis }}
+          current={{ name: scenarioName, mos: visibleMos, saturation, kpis }}
           other={compareScenario}
           loadOther={loadScenario}
           back={() => setView("gantt")}
@@ -555,19 +669,18 @@ function App() {
 }
 
 /* ------------------------------- KPIs ----------------------------------- */
-function computeKpis(mos, saturation, excludedWcs) {
+// `mos` here is the *visible* set; `schedules` is a {moId: [{date,hours}]} map.
+function computeKpis(mos, saturation, schedules) {
   let total = 0, late = 0, sumSat = 0, satDays = 0, overloadDays = 0, reassigns = 0;
   for (const m of mos) {
-    if (m.excluded) continue;
-    if (excludedWcs.has(m.Work_Center)) continue;
     total++;
     if (m.Work_Center !== m.Original_Work_Center) reassigns++;
     const due = parseISO(m.Requested_Delivery_Date);
-    const ned = parseISO(m.newEnd);
+    const sched = schedules ? schedules[m.MO_ID] : null;
+    const ned = sched && sched.length ? sched[sched.length-1].date : parseISO(m.newStart);
     if (due && ned && ned > due) late++;
   }
   for (const wc of Object.keys(saturation)) {
-    if (excludedWcs.has(wc)) continue;
     for (const cell of saturation[wc]) {
       if (cell.available > 0) {
         const ratio = cell.allocated / cell.available;
@@ -583,12 +696,17 @@ function computeKpis(mos, saturation, excludedWcs) {
 /* ------------------------------ Toolbar --------------------------------- */
 function Toolbar({ scenarioName, setScenarioName, onImport, loadSample, onExport,
                   saveScenario, loadScenario, zoom, setZoom, pxPerDay, setPxPerDay,
-                  openCalendar, view, setView, hasData }) {
+                  openCalendar, view, setView, hasData, realign,
+                  sidebarOpen, setSidebarOpen }) {
   const importRef = useRef();
   const loadRef = useRef();
   const compareRef = useRef();
   return (
     <header className="border-b bg-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <button className="btn px-2" title={sidebarOpen ? "Hide Resources panel" : "Show Resources panel"}
+              onClick={()=>setSidebarOpen(!sidebarOpen)}>
+        {sidebarOpen ? "◀" : "▶"}
+      </button>
       <div className="flex items-center gap-2">
         <div className="w-7 h-7 rounded bg-slate-900 text-white flex items-center justify-center text-xs font-bold">PS</div>
         <div className="font-semibold text-slate-800">Production Scenario Scheduler</div>
@@ -624,6 +742,9 @@ function Toolbar({ scenarioName, setScenarioName, onImport, loadSample, onExport
 
       <div className="flex items-center gap-1">
         <button className="btn" onClick={openCalendar}>Calendar</button>
+        <button className="btn" disabled={!hasData} onClick={realign} title="Sequence MOs in each visible Work Center with no gaps">
+          Realign
+        </button>
       </div>
 
       <div className="ml-auto flex items-center gap-2 text-sm">
@@ -674,10 +795,20 @@ function KpiBar({ k, mosCount }) {
 }
 
 /* ------------------------------ Sidebar --------------------------------- */
-function Sidebar({ grouped, excludedWcs, toggleWc, openCalendar }) {
+function Sidebar({ grouped, excludedWcs, toggleWc, openCalendar, close, mos }) {
+  // visible MO count per WC (excluding MOs marked excluded individually)
+  const liveCount = {};
+  for (const m of mos) {
+    if (m.excluded) continue;
+    liveCount[m.Work_Center] = (liveCount[m.Work_Center] || 0) + 1;
+  }
   return (
-    <aside className="w-64 border-r bg-white overflow-auto p-2 text-sm">
-      <div className="font-medium text-slate-700 mb-2">Resources</div>
+    <aside className="w-64 border-r bg-white overflow-auto p-2 text-sm shrink-0">
+      <div className="flex items-center mb-2">
+        <div className="font-medium text-slate-700">Resources</div>
+        <button className="ml-auto text-slate-500 hover:text-slate-900 text-xs"
+                onClick={close} title="Hide panel">◀ hide</button>
+      </div>
       {grouped.length === 0 && <div className="text-slate-500 text-xs">Import data to see resources.</div>}
       {grouped.map(g => (
         <div key={g.rg} className="mb-3">
@@ -686,8 +817,8 @@ function Sidebar({ grouped, excludedWcs, toggleWc, openCalendar }) {
             <div key={w.wc} className="flex items-center gap-2 py-0.5">
               <input type="checkbox" checked={!excludedWcs.has(w.wc)}
                      onChange={() => toggleWc(w.wc)} />
-              <span className="flex-1 truncate" title={w.wc}>{w.wc}</span>
-              <span className="text-[11px] text-slate-500">{w.mos.length}</span>
+              <span className={`flex-1 truncate ${excludedWcs.has(w.wc)?"text-slate-400":""}`} title={w.wc}>{w.wc}</span>
+              <span className="text-[11px] text-slate-500">{liveCount[w.wc] || 0}</span>
               <button className="text-[11px] text-blue-600 hover:underline"
                       onClick={() => openCalendar(w.wc)}>cal</button>
             </div>
@@ -724,104 +855,75 @@ const CAP_H = 16;       // capacity heat strip per WC
 const HEADER_H = 56;
 const LABEL_W = 240;
 
-function Gantt({ grouped, days, pxPerDay, zoom, mos, saturation, excludedWcs, onBarMouseDown, toggleExclude }) {
+function Gantt({ grouped, days, pxPerDay, zoom, schedules, saturation,
+                 globalCal, wcOverrides, onBarMouseDown, toggleExclude }) {
   const totalWidth = days.length * pxPerDay;
 
-  // Pre-compute per-row layout (an MO row per MO; capacity strip per WC)
+  // Layout: list of rows in order, with kind + y position.
   const rows = [];
   for (const g of grouped) {
     rows.push({ kind: "rg", rg: g.rg });
     for (const w of g.wcs) {
-      const dim = excludedWcs.has(w.wc);
-      rows.push({ kind: "wc", wc: w.wc, dim });
-      rows.push({ kind: "cap", wc: w.wc, dim });
+      rows.push({ kind: "wc", wc: w.wc });
+      rows.push({ kind: "cap", wc: w.wc });
       for (const mo of w.mos) {
-        rows.push({ kind: "mo", wc: w.wc, mo, dim: dim || mo.excluded });
+        rows.push({ kind: "mo", wc: w.wc, mo });
       }
     }
   }
-  const totalHeight = rows.reduce((acc, r) =>
-    acc + (r.kind === "rg" ? 24 : r.kind === "wc" ? 24 : r.kind === "cap" ? CAP_H : ROW_H), 0);
-
-  // y positions
+  const rowH = r => r.kind === "rg" ? 24 : r.kind === "wc" ? 24
+                   : r.kind === "cap" ? CAP_H : ROW_H;
   const yOf = [];
   let y = 0;
-  for (const r of rows) {
-    yOf.push(y);
-    y += (r.kind === "rg" ? 24 : r.kind === "wc" ? 24 : r.kind === "cap" ? CAP_H : ROW_H);
-  }
+  for (const r of rows) { yOf.push(y); y += rowH(r); }
+  const totalHeight = y;
 
-  // For each WC, find the y-range covered by its MO rows (used for vertical drop detection)
+  // For each WC, find the y-range covered by its rows (drop target during drag).
   const wcRowRanges = {};
   rows.forEach((r, i) => {
-    if (r.kind === "wc" || r.kind === "cap" || r.kind === "mo") {
-      const wc = r.wc;
-      const top = yOf[i];
-      const bot = top + (r.kind === "cap" ? CAP_H : r.kind === "wc" ? 24 : ROW_H);
-      if (!wcRowRanges[wc]) wcRowRanges[wc] = { top, bot };
-      else { wcRowRanges[wc].top = Math.min(wcRowRanges[wc].top, top);
-             wcRowRanges[wc].bot = Math.max(wcRowRanges[wc].bot, bot); }
+    if (!r.wc) return;
+    const top = yOf[i], bot = top + rowH(r);
+    if (!wcRowRanges[r.wc]) wcRowRanges[r.wc] = { top, bot };
+    else {
+      wcRowRanges[r.wc].top = Math.min(wcRowRanges[r.wc].top, top);
+      wcRowRanges[r.wc].bot = Math.max(wcRowRanges[r.wc].bot, bot);
     }
   });
 
   const dayX = i => i * pxPerDay;
-  const startISO = toISO(days[0]);
+  const dayIndex = (d) => diffDays(days[0], d);
 
-  const moRect = (mo) => {
-    const s = parseISO(mo.newStart), e = parseISO(mo.newEnd);
-    const x = diffDays(days[0], s) * pxPerDay;
-    const w = (diffDays(s, e) + 1) * pxPerDay - 2;
-    return { x, w };
+  // Convert a schedule into visual segments grouped by consecutive open days.
+  const segmentsOf = (sched) => {
+    const segs = [];
+    let cur = null;
+    for (const e of sched) {
+      if (cur && diffDays(cur.last, e.date) === 1) {
+        cur.last = e.date;
+        cur.hours += e.hours;
+      } else {
+        if (cur) segs.push(cur);
+        cur = { first: e.date, last: e.date, hours: e.hours };
+      }
+    }
+    if (cur) segs.push(cur);
+    return segs;
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Day axis (sticky) */}
-      <div className="flex border-b bg-white">
-        <div className="shrink-0 border-r" style={{ width: LABEL_W, height: HEADER_H }}>
-          <div className="px-3 py-2 text-xs text-slate-500">Group / Work Center / MO</div>
-        </div>
-        <div className="overflow-auto scrollbar-thin" style={{ height: HEADER_H }}>
-          <svg width={totalWidth} height={HEADER_H}>
-            {/* Month bands */}
-            {(() => {
-              const bands = [];
-              let i = 0;
-              while (i < days.length) {
-                let j = i;
-                const m = days[i].getMonth(), y = days[i].getFullYear();
-                while (j < days.length && days[j].getMonth() === m) j++;
-                bands.push({ x: i * pxPerDay, w: (j - i) * pxPerDay,
-                             label: days[i].toLocaleString(undefined, { month: "long", year: "numeric" }) });
-                i = j;
-              }
-              return bands.map((b, k) => (
-                <g key={k}>
-                  <rect x={b.x} y={0} width={b.w} height={24} fill={k % 2 ? "#f8fafc" : "#eef2f7"} />
-                  <text x={b.x + 6} y={16} fontSize="11" fill="#475569">{b.label}</text>
-                </g>
-              ));
-            })()}
-            {days.map((d, i) => (
-              <g key={i}>
-                <rect x={dayX(i)} y={24} width={pxPerDay} height={HEADER_H-24}
-                      fill={isWeekend(d) ? "#f1f5f9" : "#fff"} stroke="#e2e8f0" />
-                <text x={dayX(i) + pxPerDay/2} y={38} fontSize="10" textAnchor="middle" fill="#64748b">
-                  {weekdayShort(d)[0]}
-                </text>
-                <text x={dayX(i) + pxPerDay/2} y={50} fontSize="11" textAnchor="middle" fill="#0f172a">
-                  {d.getDate()}
-                </text>
-              </g>
-            ))}
-          </svg>
-        </div>
-      </div>
+    <div className="flex-1 overflow-auto scrollbar-thin bg-white relative" style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", minWidth: "max-content" }}>
 
-      {/* Body */}
-      <div className="flex-1 flex overflow-auto scrollbar-thin">
-        {/* Labels column */}
-        <div className="shrink-0 border-r bg-white" style={{ width: LABEL_W }}>
+        {/* ============ LEFT: sticky labels column ============ */}
+        <div className="sticky left-0 z-20 bg-white shrink-0 border-r"
+             style={{ width: LABEL_W }}>
+          {/* Top-left corner (sticky on both axes) */}
+          <div className="sticky top-0 z-30 bg-white border-b px-3 text-xs text-slate-500 flex items-end"
+               style={{ height: HEADER_H }}>
+            Group / Work Center / MO
+            <span className="ml-auto text-slate-400 text-[10px]">due</span>
+          </div>
+          {/* Label rows */}
           <div style={{ height: totalHeight, position: "relative" }}>
             {rows.map((r, i) => {
               const yPos = yOf[i];
@@ -832,58 +934,118 @@ function Gantt({ grouped, days, pxPerDay, zoom, mos, saturation, excludedWcs, on
                 </div>
               );
               if (r.kind === "wc") return (
-                <div key={i} className={`row-label px-3 text-sm font-medium text-slate-800 border-b ${r.dim?"opacity-40":""}`}
+                <div key={i} className="row-label px-3 text-sm font-medium text-slate-800 border-b bg-white"
                      style={{ position: "absolute", top: yPos, left: 0, right: 0, height: 24, lineHeight: "24px" }}>
                   {r.wc}
                 </div>
               );
               if (r.kind === "cap") return (
-                <div key={i} className="row-label px-3 text-[10px] text-slate-500 border-b"
+                <div key={i} className="row-label px-3 text-[10px] text-slate-500 border-b bg-white"
                      style={{ position: "absolute", top: yPos, left: 0, right: 0, height: CAP_H, lineHeight: `${CAP_H}px` }}>
                   saturation
                 </div>
               );
+              // MO row
+              const mo = r.mo;
+              const due = parseISO(mo.Requested_Delivery_Date);
+              const sched = schedules[mo.MO_ID] || [];
+              const ned = sched.length ? sched[sched.length-1].date : null;
+              const late = due && ned && ned > due;
               return (
-                <div key={i} className={`row-label px-3 text-xs text-slate-700 border-b flex items-center gap-2 ${r.dim?"opacity-40":""}`}
+                <div key={i} className="row-label px-3 text-xs text-slate-700 border-b flex items-center gap-2 bg-white"
                      style={{ position: "absolute", top: yPos, left: 0, right: 0, height: ROW_H }}>
-                  <input type="checkbox" checked={!r.mo.excluded} onChange={() => toggleExclude(r.mo.MO_ID)} title="Include in scenario"/>
-                  <div className="flex-1 truncate" title={`${r.mo.MO_ID} · ${r.mo.Item}`}>
-                    <span className="font-mono">{r.mo.MO_ID}</span> · {r.mo.Item}
+                  <input type="checkbox" checked={!mo.excluded}
+                         onChange={() => toggleExclude(mo.MO_ID)}
+                         title="Include in scenario"/>
+                  <div className="flex-1 truncate" title={`${mo.MO_ID} · ${mo.Item}`}>
+                    <span className="font-mono">{mo.MO_ID}</span>
+                    <span className="text-slate-500"> · {mo.Item}</span>
+                    <span className="text-[10px] text-slate-500"> · {mo.Capacity_Hours}h</span>
                   </div>
-                  <span className="text-[10px] text-slate-500">{r.mo.Capacity_Hours}h</span>
+                  <span className={`text-[10px] tabular-nums ${late?"text-red-600 font-semibold":"text-slate-500"}`}
+                        title={`Requested delivery: ${due ? fmtFull(due) : "—"}${late?" (late)":""}`}>
+                    {due ? fmtShort(due) : "—"}
+                  </span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* SVG grid + bars */}
-        <div style={{ overflow: "visible" }}>
+        {/* ============ RIGHT: time axis + grid + bars ============ */}
+        <div style={{ width: totalWidth }}>
+          {/* Sticky time axis */}
+          <div className="sticky top-0 z-10 bg-white border-b" style={{ height: HEADER_H }}>
+            <svg width={totalWidth} height={HEADER_H}>
+              {/* Month bands */}
+              {(() => {
+                const bands = [];
+                let i = 0;
+                while (i < days.length) {
+                  let j = i;
+                  const mo = days[i].getMonth();
+                  while (j < days.length && days[j].getMonth() === mo) j++;
+                  bands.push({ x: i * pxPerDay, w: (j - i) * pxPerDay,
+                               label: days[i].toLocaleString(undefined, { month: "long", year: "numeric" }) });
+                  i = j;
+                }
+                return bands.map((b, k) => (
+                  <g key={k}>
+                    <rect x={b.x} y={0} width={b.w} height={24} fill={k % 2 ? "#f8fafc" : "#eef2f7"} />
+                    <text x={b.x + 6} y={16} fontSize="11" fill="#475569">{b.label}</text>
+                  </g>
+                ));
+              })()}
+              {days.map((d, i) => {
+                const av = availableHours(null, d, globalCal, wcOverrides);
+                // Note: availableHours of "null" WC === global default
+                const closedGlobally = av === 0;
+                return (
+                  <g key={i}>
+                    <rect x={dayX(i)} y={24} width={pxPerDay} height={HEADER_H-24}
+                          fill={closedGlobally ? "#e2e8f0" : (isWeekend(d) ? "#f1f5f9" : "#fff")}
+                          stroke="#e2e8f0" />
+                    <text x={dayX(i) + pxPerDay/2} y={38} fontSize="10" textAnchor="middle" fill="#64748b">
+                      {weekdayShort(d)[0]}
+                    </text>
+                    <text x={dayX(i) + pxPerDay/2} y={50} fontSize="11" textAnchor="middle" fill="#0f172a">
+                      {d.getDate()}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          {/* Main SVG: grid, capacity strip, bars */}
           <svg width={totalWidth} height={totalHeight} shapeRendering="crispEdges">
-            {/* Vertical day grid */}
-            {days.map((d, i) => (
-              <rect key={i} x={dayX(i)} y={0} width={pxPerDay} height={totalHeight}
-                    fill={isWeekend(d) ? "#f8fafc" : "#fff"} stroke="#eef2f7" />
-            ))}
-            {/* Row backgrounds + invisible drop zones for WC reassignment */}
+            {/* Vertical day grid (closed days globally shaded) */}
+            {days.map((d, i) => {
+              const av = availableHours(null, d, globalCal, wcOverrides);
+              const closedGlobally = av === 0;
+              return (
+                <rect key={i} x={dayX(i)} y={0} width={pxPerDay} height={totalHeight}
+                      fill={closedGlobally ? "#f1f5f9" : (isWeekend(d) ? "#fafafa" : "#fff")}
+                      stroke="#eef2f7" />
+              );
+            })}
+            {/* Row backgrounds */}
             {rows.map((r, i) => {
               const yPos = yOf[i];
               if (r.kind === "rg") return (
                 <rect key={i} x={0} y={yPos} width={totalWidth} height={24} fill="#f1f5f9" stroke="#e2e8f0" />
               );
               if (r.kind === "wc") return (
-                <rect key={i} x={0} y={yPos} width={totalWidth} height={24}
-                      fill={r.dim ? "#f9fafb" : "#ffffff"} stroke="#e2e8f0" />
+                <rect key={i} x={0} y={yPos} width={totalWidth} height={24} fill="#ffffff" stroke="#e2e8f0" />
               );
               if (r.kind === "cap") {
-                // Render saturation cells
                 const sats = saturation[r.wc] || [];
                 return (
                   <g key={i}>
                     {sats.map((s, k) => {
                       const ratio = s.available > 0 ? s.allocated / s.available : 0;
                       let fill = "#e5e7eb";
-                      if (s.available === 0) fill = "#cbd5e1";
+                      if (s.available === 0) fill = "#cbd5e1"; // closed day
                       else if (ratio > 1.0001) fill = "#fecaca";
                       else if (ratio > 0.85) fill = "#fde68a";
                       else if (ratio > 0) fill = "#bbf7d0";
@@ -903,41 +1065,70 @@ function Gantt({ grouped, days, pxPerDay, zoom, mos, saturation, excludedWcs, on
               }
               return null;
             })}
-            {/* Invisible drop zones per WC (cover MO+wc+cap rows) for vertical drag detection */}
+            {/* Invisible drop zones per WC for vertical drag detection */}
             {Object.entries(wcRowRanges).map(([wc, range]) => (
               <foreignObject key={wc} x={0} y={range.top} width={totalWidth} height={range.bot - range.top}
                              data-wc-row={wc} style={{ pointerEvents: "auto" }}>
                 <div data-wc-row={wc} style={{ width: "100%", height: "100%" }} />
               </foreignObject>
             ))}
-            {/* MO bars */}
+            {/* MO bars — one rect per segment of contiguous open days */}
             {rows.map((r, i) => {
               if (r.kind !== "mo") return null;
               const yPos = yOf[i];
               const mo = r.mo;
-              const { x, w } = moRect(mo);
+              const sched = schedules[mo.MO_ID] || [];
+              const segs = segmentsOf(sched);
               const due = parseISO(mo.Requested_Delivery_Date);
-              const ned = parseISO(mo.newEnd);
-              const late = !mo.excluded && due && ned && ned > due;
+              const ned = sched.length ? sched[sched.length-1].date : null;
+              const late = due && ned && ned > due;
               const reassigned = mo.Work_Center !== mo.Original_Work_Center;
               let fill = "#3b82f6";
-              if (mo.excluded) fill = "#94a3b8";
-              else if (late) fill = "#dc2626";
+              if (late) fill = "#dc2626";
               else if (reassigned) fill = "#7c3aed";
+              // anchor (newStart) used for drag pickup if there's no schedule yet
+              const anchor = parseISO(mo.newStart);
               return (
                 <g key={i} onMouseDown={(e)=>onBarMouseDown(e, mo)} className={`mo-bar ${late?"late":""}`}>
-                  <rect x={x+1} y={yPos+4} width={Math.max(w,4)} height={ROW_H-8}
-                        rx="4" ry="4" fill={fill}
-                        opacity={mo.excluded ? 0.4 : 1} />
-                  {w > 60 && (
-                    <text x={x+8} y={yPos+ROW_H/2+4} fontSize="11" fill="white">
-                      {mo.MO_ID} · {mo.Capacity_Hours}h
-                    </text>
+                  {segs.length === 0 && anchor && (
+                    <rect x={dayIndex(anchor)*pxPerDay+1} y={yPos+4}
+                          width={pxPerDay-2} height={ROW_H-8}
+                          rx="4" ry="4" fill="#cbd5e1" />
                   )}
-                  {/* Due date marker */}
+                  {segs.map((sg, k) => {
+                    const x = dayIndex(sg.first) * pxPerDay + 1;
+                    const w = (diffDays(sg.first, sg.last) + 1) * pxPerDay - 2;
+                    return (
+                      <g key={k}>
+                        <rect x={x} y={yPos+4} width={Math.max(w, 4)} height={ROW_H-8}
+                              rx="4" ry="4" fill={fill} />
+                        {/* faint connector to next segment (across closed days) */}
+                        {k < segs.length-1 && (
+                          <line x1={x + w + 2}
+                                x2={dayIndex(segs[k+1].first) * pxPerDay}
+                                y1={yPos + ROW_H/2} y2={yPos + ROW_H/2}
+                                stroke={fill} strokeWidth="1.5" strokeDasharray="2,2" opacity="0.6" />
+                        )}
+                      </g>
+                    );
+                  })}
+                  {/* Label on the first segment */}
+                  {segs[0] && (() => {
+                    const x = dayIndex(segs[0].first) * pxPerDay + 1;
+                    const w = (diffDays(segs[0].first, segs[0].last) + 1) * pxPerDay - 2;
+                    if (w < 60) return null;
+                    return (
+                      <text x={x + 6} y={yPos + ROW_H/2 + 4} fontSize="11" fill="white" pointerEvents="none">
+                        {mo.MO_ID} · {mo.Capacity_Hours}h
+                      </text>
+                    );
+                  })()}
+                  {/* Due-date dashed marker on the MO's row */}
                   {due && (() => {
-                    const dx = diffDays(days[0], due) * pxPerDay + pxPerDay/2;
-                    return <line x1={dx} x2={dx} y1={yPos+2} y2={yPos+ROW_H-2} stroke="#0f172a" strokeWidth="1" strokeDasharray="2,2" />;
+                    const dx = dayIndex(due) * pxPerDay + pxPerDay/2;
+                    if (dx < 0 || dx > totalWidth) return null;
+                    return <line x1={dx} x2={dx} y1={yPos+2} y2={yPos+ROW_H-2}
+                                  stroke="#0f172a" strokeWidth="1" strokeDasharray="2,2" />;
                   })()}
                 </g>
               );
@@ -945,14 +1136,10 @@ function Gantt({ grouped, days, pxPerDay, zoom, mos, saturation, excludedWcs, on
             {/* Today line */}
             {(() => {
               const today = startOfDay(new Date());
-              const idx = diffDays(days[0], today);
+              const idx = dayIndex(today);
               if (idx < 0 || idx >= days.length) return null;
               const tx = idx * pxPerDay + pxPerDay/2;
-              return (
-                <g>
-                  <line x1={tx} x2={tx} y1={0} y2={totalHeight} stroke="#0ea5e9" strokeWidth="1.5" />
-                </g>
-              );
+              return <line x1={tx} x2={tx} y1={0} y2={totalHeight} stroke="#0ea5e9" strokeWidth="1.5" />;
             })()}
           </svg>
         </div>
@@ -1174,39 +1361,40 @@ function CalendarModal({ target, globalCal, setGlobalCal, wcOverrides, setWcOver
 function CompareView({ current, other, loadOther, back }) {
   const otherKpis = useMemo(() => {
     if (!other) return null;
-    // recompute saturation for the other scenario using its own calendar
     const ogc = other.globalCal || makeDefaultGlobalCalendar();
     const oov = other.wcOverrides || {};
     const oexc = new Set(other.excludedWcs || []);
-    // Time window union
-    const today = startOfDay(new Date());
-    let min = today, max = today;
-    for (const m of other.mos) {
-      const s = parseISO(m.newStart), e = parseISO(m.newEnd);
-      if (s && s < min) min = s;
-      if (e && e > max) max = e;
+    const visible = (other.mos || []).filter(m => !m.excluded && !oexc.has(m.Work_Center));
+    // Build schedules with the saved calendar
+    const sched = {};
+    for (const m of visible) sched[m.MO_ID] = computeMoSchedule(m, ogc, oov);
+    // Time window
+    let min = null, max = null;
+    for (const m of visible) {
+      const s = parseISO(m.newStart);
+      const list = sched[m.MO_ID];
+      const e = list && list.length ? list[list.length-1].date : s;
+      if (s && (min == null || s < min)) min = s;
+      if (e && (max == null || e > max)) max = e;
     }
-    const total = diffDays(min, max) + 1;
-    const days = [];
-    for (let i=0;i<total;i++) days.push(addDays(min, i));
+    if (!min || !max) { const t = startOfDay(new Date()); min = t; max = addDays(t, 1); }
+    const total = Math.max(1, diffDays(min, max) + 1);
+    const days = []; for (let i=0;i<total;i++) days.push(addDays(min, i));
     const sat = {};
-    const wcs = new Set(other.mos.map(m=>m.Work_Center));
+    const wcs = new Set(visible.map(m=>m.Work_Center));
     for (const wc of wcs) {
       sat[wc] = days.map(d => ({ allocated: 0, available: availableHours(wc, d, ogc, oov) }));
     }
-    for (const m of other.mos) {
-      if (m.excluded || oexc.has(m.Work_Center)) continue;
-      const s = parseISO(m.newStart), e = parseISO(m.newEnd);
-      if (!s || !e) continue;
-      const span = Math.max(1, diffDays(s, e) + 1);
-      const perDay = m.Capacity_Hours / span;
-      for (let i=0;i<span;i++) {
-        const d = addDays(s, i);
-        const idx = diffDays(min, d);
-        if (idx >=0 && idx < days.length && sat[m.Work_Center]) sat[m.Work_Center][idx].allocated += perDay;
+    for (const m of visible) {
+      const list = sched[m.MO_ID] || [];
+      const bucket = sat[m.Work_Center];
+      if (!bucket) continue;
+      for (const e of list) {
+        const idx = diffDays(min, e.date);
+        if (idx >= 0 && idx < bucket.length) bucket[idx].allocated += e.hours;
       }
     }
-    return computeKpis(other.mos, sat, oexc);
+    return computeKpis(visible, sat, sched);
   }, [other]);
 
   const row = (label, a, b, better="lower") => {
