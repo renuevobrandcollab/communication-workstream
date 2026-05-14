@@ -125,21 +125,44 @@ const SAMPLE_WCS = [
 const generateSampleMOs = () => {
   const today = startOfDay(new Date());
   const mos = [];
-  // Mostly-future deliveries with a handful already late.
-  for (let i = 0; i < 32; i++) {
+  const N = 32;
+  // Target mix:
+  //   20% already in delay (RED — delivery date in the past)
+  //   80% on time (BLUE), of which 30% have a tight delivery date
+  //   so any forward move makes them YELLOW.
+  const pastCount  = Math.round(N * 0.20);
+  const tightCount = Math.round((N - pastCount) * 0.30);
+  const categories = [];
+  for (let i = 0; i < pastCount;  i++) categories.push("past");
+  for (let i = 0; i < tightCount; i++) categories.push("tight");
+  while (categories.length < N)        categories.push("relaxed");
+  // Shuffle so categories aren't grouped at the top.
+  for (let i = categories.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [categories[i], categories[j]] = [categories[j], categories[i]];
+  }
+
+  for (let i = 0; i < N; i++) {
     const wc = SAMPLE_WCS[i % SAMPLE_WCS.length];
-    const isPastDue = i < 4;                   // first 4 MOs are already late
-    const dueOffset = isPastDue
-      ? -7 + Math.floor(Math.random() * 5)     // -7..-3
-      : 5 + Math.floor(Math.random() * 28);    // +5..+32
-    const hours = 4 + Math.floor(Math.random() * 28); // 4..32h
-    const span = Math.max(1, Math.ceil(hours / 8));
-    // Start ~span days before the due date, but never before today.
-    const desiredStartOffset = dueOffset - span;
-    const startOffset = Math.max(0, desiredStartOffset);
+    const hours = 4 + Math.floor(Math.random() * 28);     // 4..32h
+    const span  = Math.max(1, Math.ceil(hours / 8));
+    let startOffset, dueOffset;
+    if (categories[i] === "past") {
+      // Delivery date already in the past
+      dueOffset   = -10 + Math.floor(Math.random() * 8);  // -10..-3
+      startOffset = Math.max(0, dueOffset - span + 1);    // start never in the past
+    } else if (categories[i] === "tight") {
+      // Tight delivery: due ≈ scheduled end (0 slack → easily becomes yellow)
+      startOffset = 1 + Math.floor(Math.random() * 14);   // +1..+14
+      dueOffset   = startOffset + span - 1;               // due == end
+    } else {
+      // Relaxed: 5–18 days of slack
+      startOffset = 1 + Math.floor(Math.random() * 20);   // +1..+20
+      dueOffset   = startOffset + span - 1 + 5 + Math.floor(Math.random() * 14);
+    }
     const start = addDays(today, startOffset);
-    const end = addDays(start, span - 1);
-    const due = addDays(today, dueOffset);
+    const end   = addDays(start, span - 1);
+    const due   = addDays(today, dueOffset);
     mos.push({
       MO_ID: `MO-${1000 + i}`,
       Item: SAMPLE_ITEMS[i % SAMPLE_ITEMS.length],
