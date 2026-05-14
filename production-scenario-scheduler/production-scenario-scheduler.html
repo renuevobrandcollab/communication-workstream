@@ -222,13 +222,16 @@ const typicalDailyHours = (wcId, globalCal, wcOverrides) => {
 // Pack all MOs in a single Work Center, respecting per-day residual
 // capacity left by earlier-scheduled MOs. Returns a {moId: [{date, hours}]} map
 // for the MOs in `wcMos`, and mutates `usedByIso` so callers can chain.
+//
+// IMPORTANT: MOs are processed in the order they are given (caller's order).
+// We deliberately do NOT sort by newStart here. Sorting by newStart would
+// cause bars to swap positions in the timeline as soon as a planner drags
+// one MO past another — exactly the "line flipping" behaviour we want to
+// avoid. The Realign action provides the explicit, planner-controlled
+// way to re-sequence MOs.
 const packWcSchedules = (wcMos, wc, globalCal, wcOverrides, usedByIso = {}) => {
-  // Sort by newStart so MOs anchored earlier book their days first.
-  const list = wcMos.slice().sort((a, b) =>
-    (a.newStart || "").localeCompare(b.newStart || "") ||
-    a.MO_ID.localeCompare(b.MO_ID));
   const out = {};
-  for (const m of list) {
+  for (const m of wcMos) {
     const sched = [];
     let remaining = Number(m.Capacity_Hours) || 0;
     let cursor = parseISO(m.newStart);
