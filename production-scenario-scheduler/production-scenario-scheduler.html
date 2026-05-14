@@ -415,7 +415,12 @@ function App() {
     [mos, excludedWcs]
   );
 
-  /* -------------------- Grouping for Gantt rows (visible only) -------- */
+  /* -------------------- Grouping for Gantt rows (visible only) --------
+     Row order is the import order (the order in the `mos` array). It is
+     intentionally NOT sorted by start date — otherwise dragging an MO past
+     another would reshuffle rows on every mouse move. Row order can change
+     only when the planner clicks Realign or moves an MO to a different WC.
+  */
   const grouped = useMemo(() => {
     const map = new Map();
     for (const mo of visibleMos) {
@@ -431,11 +436,7 @@ function App() {
       .map(([rg, wcs]) => ({
         rg,
         wcs: [...wcs.entries()].sort(([a],[b]) => a.localeCompare(b))
-                .map(([wc, list]) => ({
-                  wc,
-                  mos: list.sort((a,b) => (a.newStart||"").localeCompare(b.newStart||"")
-                                          || a.MO_ID.localeCompare(b.MO_ID))
-                }))
+                .map(([wc, list]) => ({ wc, mos: list }))
       }));
   }, [visibleMos]);
 
@@ -524,37 +525,64 @@ function App() {
     [visibleMos, saturation, schedules]
   );
 
-  /* -------------------- Realign (sequence MOs within each visible WC) -------------------- */
-  // Within each visible WC, sort MOs by current newStart and pack them sequentially
-  // with no gaps: each MO's newStart = the day after the previous MO's effective end.
-  // The first MO keeps its current newStart (earliest one of the WC).
+  /* -------------------- Realign (sequence MOs within each selected WC) ------
+     Operates only on MOs that are currently selected AND belong to a
+     currently selected Work Center. Anything unflagged (excluded MO or
+     excluded WC) is left untouched — its row, its newStart, everything.
+
+     For each affected WC the visible MOs are sorted by their current
+     start, then packed end-to-end starting from max(first MO's start,
+     today). The resulting row order in each affected WC matches the new
+     temporal order, so the Gantt looks clean after the action.
+  */
   const realign = () => {
     setMos(prev => {
       const today = startOfDay(new Date());
+      // Group affected MOs by WC, preserving their objects
       const byWc = new Map();
       for (const m of prev) {
         if (m.excluded || excludedWcs.has(m.Work_Center)) continue;
         if (!byWc.has(m.Work_Center)) byWc.set(m.Work_Center, []);
         byWc.get(m.Work_Center).push(m);
       }
-      const updates = {};
+      // Compute new newStart for every affected MO, in sequence per WC.
+      const updates = {};       // { moId: newStartISO }
+      const sortedPerWc = {};   // { wc: [moId, moId, ...] in new order }
       for (const [wc, list] of byWc.entries()) {
         list.sort((a,b) => (a.newStart||"").localeCompare(b.newStart||"")
                            || a.MO_ID.localeCompare(b.MO_ID));
-        // First MO of the WC starts at max(its current newStart, today).
         let cursor = list[0] ? parseISO(list[0].newStart) : null;
         if (cursor && cursor < today) cursor = today;
+        const idsInOrder = [];
         for (const m of list) {
           if (cursor < today) cursor = today;
           const ns = toISO(cursor);
           updates[m.MO_ID] = ns;
+          idsInOrder.push(m.MO_ID);
           const sched = computeMoSchedule({ ...m, newStart: ns }, globalCal, wcOverrides);
           const end = sched.length ? sched[sched.length-1].date : cursor;
           cursor = addDays(end, 1);
         }
+        sortedPerWc[wc] = idsInOrder;
       }
-      return prev.map(m => updates[m.MO_ID]
-        ? { ...m, newStart: updates[m.MO_ID] } : m);
+      // Build the result array. For each affected WC we collect the indexes
+      // that its MOs currently occupy in `prev`, then refill those slots
+      // with the WC's MOs in their new order. Untouched MOs stay put.
+      const result = prev.slice();
+      for (const [wc, idsInOrder] of Object.entries(sortedPerWc)) {
+        const slots = [];
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i].Work_Center === wc && !prev[i].excluded) slots.push(i);
+        }
+        // slots.length === idsInOrder.length by construction.
+        const byId = new Map(byWc.get(wc).map(m => [m.MO_ID, m]));
+        for (let k = 0; k < slots.length; k++) {
+          const moId = idsInOrder[k];
+          const original = byId.get(moId);
+          result[slots[k]] = { ...original, newStart: updates[moId] };
+        }
+      }
+      return result;
     });
   };
 
